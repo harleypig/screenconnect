@@ -1,0 +1,220 @@
+#!/bin/bash
+
+WORK_DIR="${PWD}"
+
+# Display the installed versions for these packages.
+
+PKG_CHECK="${PKG_CHECK} glibc"
+PKG_CHECK="${PKG_CHECK} zlib"
+
+# Assuming we are updating. We'll catch it in change_dir if we are not.
+
+INSTALLING=0
+UPDATING=1
+
+SERVICE_NAME='screenconnect'
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+
+SOURCE='/home/harleypig/projects/screenconnect/sc_src'
+SC_DIR='/opt/screenconnect'
+RUNTIME="$SC_DIR/App_Runtime"
+BACKUP_DIR="${PWD}/screen_connect_backups/screen_connect_backup_$(date +%Y%m%d_%H%M)"
+
+PATH=$RUNTIME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MONO_PATH=$RUNTIME/lib
+MONO_CFG_DIR=$RUNTIME/etc
+XDG_CONFIG_HOME=$RUNTIME/etc
+MONO_XMLSERIALIZER_THS=no
+
+###############################################################################
+# Utilities
+
+function note { printf '\n### %s\n' "$@" ; }
+function quit { printf "$@, quitting.\n" ; exit 1 ; }
+
+###############################################################################
+# Setup
+
+function version_check {
+  note 'Version check:'
+
+  for pkg in $PKG_CHECK; do
+    printf '%10s %s\n' "$pkg" "$(pacman -Qi $pkg | grep Version | tr -s ' ')"
+
+  done
+}
+
+# Using screenconnect.service based on the one posted here:
+# http://forum.screenconnect.com/yaf_postsm26971_systemd-ScreenConnect-service-unit-configuration-file-for-pure-systemd-Arch-linux-setups.aspx#post26971
+
+# The ExecStart line parameters explained:
+# 7 is hardcoded in the runService function in the included screenconnect init script.
+# The second parameter, $signalPID in the init, is $$. $MAINPID is the same, I think.
+# The third parameter, $signalNumber is hard coded in the init script as well.
+
+function install_service {
+  if [ ! -f "$SERVICE_FILE" ]; then
+    note "Creating ${SERVICE_FILE} file ..."
+
+    cat <<EOS > "$SERVICE_FILE"
+[Unit]
+Description=ScreenConnect Daemon
+After=network.target
+
+[Service]
+Type=simple
+LimitDATA=12288
+
+Environment=PATH=${RUNTIME}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=MONO_PATH=${RUNTIME}/lib
+Environment=MONO_CFG_DIR=${RUNTIME}/etc
+Environment=XDG_CONFIG_HOME=${RUNTIME}/etc
+Environment=MONO_XMLSERIALIZER_THS=no
+
+WorkingDirectory=${SC_DIR}
+ExecStart=${RUNTIME}/bin/mono ${SC_DIR}/Bin/ScreenConnect.Service.exe startservices
+
+[Install]
+WantedBy=multi-user.target
+EOS
+  fi
+
+  (($?)) && quit 'Unable to create service file'
+
+  note 'Reloading systemctl daemon ...'
+  systemctl daemon-reload
+  (($?)) && quit 'Unable to reload systemctl daemon'
+
+  note "Enabling ${SERVICE_NAME} service ..."
+  systemctl enable ${SERVICE_NAME}
+  (($?)) && quit "Unable to enable ${SERVICE_NAME} service"
+
+}
+
+function make_backup {
+  if ((UPDATING)); then
+    mkdir -p $BACKUP_DIR
+    (($?)) && quit "Unable to create backup directory (${BACKUP_DIR})"
+
+    rsync -aviHS $SC_DIR/ $BACKUP_DIR/
+    (($?)) && quit 'Unable to backup current installation'
+  fi
+}
+
+function setup_and_checks {
+  version_check
+
+  # If the install directory does not exist then we're installing.
+  if [ ! -d $SC_DIR ]; then
+    INSTALLING=1
+    UPDATING=0
+
+    note "Make $SC_DIR ..."
+    mkdir -p $SC_DIR
+    (($?)) && quit "Unable to make $SC_DIR"
+
+  fi
+
+  if ((INSTALLING)); then
+    install_service
+
+  elif ((UPDATING)); then
+    note "Stopping ${SERVICE_NAME} ..."
+    systemctl stop ${SERVICE_NAME}
+    (($?)) && quit "Unable to stop ${SERVICE_NAME}"
+
+    make_backup
+
+  fi
+}
+
+###############################################################################
+# Get the latest version
+
+function get_latest {
+
+  echo "WRITE ME DAMMIT!!!"
+  exit 1
+
+  #rm sc.tar.gz
+  local url='https://www.screenconnect.com/Download?Action=DownloadLatest&Platform=Linux&PreRelease=false'
+  wget --directory-prefix "${SOURCE_TARBALLS}" "${url}"
+}
+
+###############################################################################
+# Restore backup
+
+# Any files in these directories, and these files, should always be restored:
+
+#	App_Code
+#	App_Data/ExtensionConfiguration.xml
+#	App_Data/License.xml
+#	App_Data/Role.xml
+#	App_Data/Session
+#	App_Data/Session.*
+#	App_Data/SessionEventTrigger.xml
+#	App_Data/SessionGroup.xml
+#	App_Data/Toolbox
+#	App_Data/User.xml
+#	App_Extensions
+#	App_GlobalResources/Default.resx
+#	App_Runtime/etc/.mono/httplistener
+#	Images/LogoIcon.png
+#	Images/Logo.png
+#	Override.*resx
+#	web.config
+
+# Core.dll is the file we'll be comparing against for backup purposes.
+#   grab Core.dll's mtime: $(stat -c %Y "$file")
+
+###############################################################################
+# Main
+
+setup_and_checks
+get_latest
+install_new_files
+restore_backup
+start_service
+exit
+
+note New install, not worrying about backups or upgrades ...
+
+note Install files to $SC_DIR ...
+
+rsync -aviHS $SOURCE/ScreenConnect/ $SC_DIR/
+chown -R root. $SC_DIR
+
+note Install mono runtime ...
+
+cp -rv $SOURCE/Installer/mono_linux_02_x86_64 $RUNTIME/bin/mono
+
+note chmod files ...
+
+chmod -v 0755 $RUNTIME/bin/*
+
+note No backups to touch new files with ...
+
+note Verifying environment variables:
+
+echo PATH: $PATH
+echo MONO_PATH: $MONO_PATH
+echo MONO_CFG_DIR: $MONO_CFG_DIR
+echo XDG_CONFIG_HOME: $XDG_CONFIG_HOME
+echo MONO_XMLSERIALIZER_THS: $MONO_XMLSERIALIZER_THS
+
+note Verifying mono installation:
+
+echo mono path: $(which mono) ...
+echo mono version:
+mono --version
+
+note Transforming configuration files ...
+
+cd $SOURCE/Installer
+
+note Changed to $(pwd) ...
+
+mono Xsl.exe $SC_DIR/web.config TransformWebConfig.xsl $SC_DIR/web.config configuration=Release platform=Mono
+mono Xsl.exe $SC_DIR/App_Data/Role.xml TransformRoleXml.xsl $SC_DIR/App_Data/Role.xml oldVersionMajor= oldVersionMinor= oldVersionBuild= oldVersionRevision=
+
+note Done.

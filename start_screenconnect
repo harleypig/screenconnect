@@ -1,0 +1,11 @@
+#!/bin/bash
+
+export PATH=/opt/screenconnect/App_Runtime/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export MONO_PATH=/opt/screenconnect/App_Runtime/lib
+export MONO_CFG_DIR=/opt/screenconnect/App_Runtime/etc
+export XDG_CONFIG_HOME=/opt/screenconnect/App_Runtime/etc
+export MONO_XMLSERIALIZER_THS=no
+
+which mono
+mono --version
+mono /opt/screenconnect/Bin/ScreenConnect.Service.exe startservices

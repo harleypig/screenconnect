@@ -1,0 +1,6 @@
+tarballs/*
+backups/*
+work/*
+
+*.tar.gz
+sc_src

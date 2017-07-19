@@ -1,0 +1,4 @@
+#!/bin/bash
+
+rm sc.tar.gz
+wget -O sc.tar.gz "https://www.screenconnect.com/Download?Action=DownloadLatest&Platform=Linux&PreRelease=false"
